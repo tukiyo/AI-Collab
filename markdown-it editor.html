@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>markdown-it + mermaid editor</title>
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.1/dist/markdown-it.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/turndown@7.1.1/dist/turndown.min.js"></script>
+    <style>
+        /* Gemini風 カラー＆変数定義 */
+        :root { 
+            --bg-body: #ffffff; --bg-surface: #f0f4f9; --text-primary: #1f1f1f; --text-secondary: #444746;
+            --primary-color: #0b57d0; --primary-text: #ffffff; --border-color: #e3e3e3; --btn-bg: #e8def8; --btn-text: #1d192b;
+            --code-bg: #f8f9fa; --table-even: #f8f9fa; --radius: 24px; --sidebar-width: 280px;
+            --highlight-color: rgba(11, 87, 208, 0.15);
+            --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+            color-scheme: light;
+        }
+        body.dark-mode {
+            --bg-body: #131314; --bg-surface: #1e1f20; --text-primary: #e3e3e3; --text-secondary: #c4c7c5;
+            --primary-color: #a8c7fa; --primary-text: #041e49; --border-color: #444746; --btn-bg: #4a4458; --btn-text: #e8def8;
+            --code-bg: #1e1f20; --table-even: #1e1f20;
+            --highlight-color: rgba(168, 199, 250, 0.25);
+            --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+            color-scheme: dark;
+        }
+        @media (prefers-color-scheme: dark) {
+            body:not(.light-mode) {
+                --bg-body: #131314; --bg-surface: #1e1f20; --text-primary: #e3e3e3; --text-secondary: #c4c7c5;
+                --primary-color: #a8c7fa; --primary-text: #041e49; --border-color: #444746; --btn-bg: #4a4458; --btn-text: #e8def8;
+                --code-bg: #1e1f20; --table-even: #1e1f20;
+                --highlight-color: rgba(168, 199, 250, 0.25);
+                --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+                color-scheme: dark;
+            }
+        }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.5); }
+
+        /* 全体のフォントをGeminiライクに（Google Sans優先） */
+        body { margin: 0; font-family: 'Google Sans Text', 'Google Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; height: 100vh; overflow: hidden; background: var(--bg-body); color: var(--text-primary); transition: background 0.3s; letter-spacing: 0.01em; }
+        
+        /* サイドバー */
+        #sidebar { width: var(--sidebar-width); background: var(--bg-surface); display: flex; flex-direction: column; transition: transform 0.3s ease, width 0.3s; z-index: 100; border-right: 1px solid var(--border-color); }
+        #sidebar.collapsed { width: 0; transform: translateX(-100%); border: none; }
+        .sidebar-header { padding: 16px; display: flex; align-items: center; gap: 12px; height: 60px; box-sizing: border-box; }
+        .icon-btn { background: transparent; border: none; fill: var(--text-primary); cursor: pointer; padding: 8px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+        .icon-btn:hover { background: rgba(128,128,128,0.1); }
+        
+        #toc-container { flex: 1; padding: 0 16px 20px; overflow-y: auto; }
+        #toc-container h3 { font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-top: 10px; }
+        #toc-container ul { list-style: none; padding: 0; margin: 0; }
+        #toc-container li { margin-bottom: 4px; }
+        #toc-container a { display: block; padding: 8px 12px; border-radius: 8px; color: var(--text-primary); text-decoration: none; font-size: 13px; transition: background 0.2s; }
+        #toc-container a:hover { background: rgba(128,128,128,0.1); }
+        .toc-h2 { padding-left: 12px; } .toc-h3 { padding-left: 24px; opacity: 0.8; }
+
+        /* メインエリア */
+        #main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg-body); }
+        .top-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; height: 60px; box-sizing: border-box; }
+        .header-left, .header-right { display: flex; align-items: center; gap: 12px; }
+        
+        .pill-btn { background: var(--btn-bg); color: var(--btn-text); border: none; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: opacity 0.2s; display: flex; align-items: center; gap: 6px; }
+        .pill-btn:hover { opacity: 0.8; }
+        .primary-btn { background: var(--primary-color); color: var(--primary-text); }
+
+        /* ワークスペース */
+        #workspace { flex: 1; display: flex; gap: 16px; padding: 0 16px 16px; overflow: hidden; }
+        
+        /* エディタ */
+        #editor-pane { display: none; flex-direction: column; flex: 1; background: var(--bg-surface); border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border-color); }
+        .editor-tools { padding: 8px 16px; border-bottom: 1px solid var(--border-color); display: flex; gap: 8px; flex-wrap: wrap; background: var(--bg-surface); }
+        .tool-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-primary); padding: 4px 10px; border-radius: 16px; font-size: 13px; cursor: pointer; }
+        .tool-btn:hover { background: rgba(128,128,128,0.1); }
+        
+        /* テキストエリアのフォントを等幅に */
+        textarea { flex: 1; padding: 16px 24px 24px; border: none; outline: none; background: transparent; color: var(--text-primary); font-family: 'Google Sans Mono', 'Roboto Mono', 'Fira Code', Consolas, monospace; font-size: 15px; line-height: 1.6; resize: none; }
+
+        /* プレビュー */
+        #preview-pane { flex: 1; background: var(--bg-body); border-radius: var(--radius); overflow-y: auto; padding: 16px 40px 24px; scroll-behavior: smooth; }
+        
+        /* Markdown 装飾（Gemini風にフォントサイズと見出しを調整） */
+        .markdown-body { max-width: 800px; margin: 0 auto; line-height: 1.7; outline: none; font-size: 16px; font-weight: 400; }
+        .markdown-body > *:first-child { margin-top: 0; }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: 500; transition: background-color 0.5s ease; border-radius: 8px; padding: 4px 8px; margin-left: -8px; margin-right: -8px; }
+        
+        /* 見出しのサイズ定義 (ボーダーを削除しクリーンに) */
+        .markdown-body h1 { font-size: 1.5em; margin-top: 1.5em; } /* 約24px */
+        .markdown-body h2 { font-size: 1.25em; margin-top: 1.5em; } /* 約20px */
+        .markdown-body h3 { font-size: 1.125em; margin-top: 1.2em; } /* 約18px */
+
+        /* ハイライトアニメーション */
+        @keyframes highlight-fade {
+            0% { background-color: var(--highlight-color); }
+            100% { background-color: transparent; }
+        }
+        .section-highlight {
+            animation: highlight-fade 1.5s ease-out;
+        }
+
+        .markdown-body a { color: var(--primary-color); text-decoration: none; }
+        .markdown-body a:hover { text-decoration: underline; }
+        .markdown-body table { border-collapse: collapse; width: 100%; margin: 20px 0; border-radius: 8px; overflow: hidden; }
+        .markdown-body th, .markdown-body td { border: 1px solid var(--border-color); padding: 12px; }
+        .markdown-body th { background: var(--bg-surface); font-weight: 500; }
+        .markdown-body tr:nth-child(even) { background: var(--table-even); }
+        
+        /* プレビュー側のコードフォント設定 */
+        .markdown-body code { background: var(--code-bg); padding: 0.2em 0.4em; border-radius: 6px; font-size: 14px; font-family: 'Google Sans Mono', 'Roboto Mono', 'Fira Code', Consolas, monospace; }
+        .markdown-body pre { background: var(--code-bg); padding: 16px; border-radius: 16px; border: 1px solid var(--border-color); overflow: auto; font-family: 'Google Sans Mono', 'Roboto Mono', 'Fira Code', Consolas, monospace; }
+        .markdown-body pre code { background: transparent; padding: 0; font-size: 14px; border-radius: 0; border: none; font-family: inherit; }
+        
+        .markdown-body blockquote { border-left: 4px solid var(--primary-color); padding-left: 16px; color: var(--text-secondary); margin-left: 0; background: var(--bg-surface); padding-top: 8px; padding-bottom: 8px; border-radius: 0 8px 8px 0; }
+        
+        /* Mermaid図形エリア（編集不可を示すため選択範囲を無効化） */
+        .mermaid { background: transparent; padding: 16px; text-align: center; border-radius: 16px; border: 1px solid var(--border-color); margin: 24px 0; transition: background-color 0.3s; user-select: none; -webkit-user-select: none; }
+    </style>
+</head>
+<body>
+
+<aside id="sidebar">
+    <div class="sidebar-header">
+        <button class="icon-btn" onclick="toggleSidebar()" title="メニューを開閉">
+            <svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+        </button>
+    </div>
+    <div id="toc-container">
+        <h3>目次</h3>
+        <div id="toc-content"></div>
+    </div>
+</aside>
+
+<main id="main-content">
+    <header class="top-header">
+        <div class="header-left">
+            <button class="icon-btn" onclick="toggleSidebar()" id="mobile-menu-btn" style="display:none;">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+            </button>
+        </div>
+        <div class="header-right">
+            <button class="icon-btn" onclick="toggleDarkMode()" title="テーマ切替">
+                <svg width="20" height="20" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>
+            </button>
+            <button class="pill-btn" onclick="toggleEditor()">
+                <svg width="18" height="18" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                編集
+            </button>
+            <button class="pill-btn primary-btn" onclick="saveAsHtml()">保存</button>
+        </div>
+    </header>
+
+    <div id="workspace">
+        <div id="editor-pane">
+            <div class="editor-tools">
+                <button class="tool-btn" onclick="insertTpl('h2')">見出し</button>
+                <button class="tool-btn" onclick="insertTpl('table')">テーブル</button>
+                <button class="tool-btn" onclick="insertTpl('code')">コード</button>
+                <button class="tool-btn" onclick="insertTpl('quote')">引用</button>
+            </div>
+            <textarea id="markdown-input"># 新しい仕様書
+
+## 1. 概要
+目次の項目をクリックしてみてください。該当の見出しがハイライトされます。
+
+## 2. コードブロックの表示
+プログラミングのコードはバッククォート3つ（`` ` ``）で囲むことで、きれいにフォーマットされます。
+
+```javascript
+// サンプルコード
+function showGreeting() {
+    console.log("Hello, Gemini Style Editor!");
+}
+```
+
+## 3. Mermaidダイアグラム
+フローチャートやシーケンス図を描画するには、`div` タグに `mermaid` クラスを指定して記述します。ここがプレビュー画面で誤って編集・破壊されないように保護しました。
+
+<div class="mermaid">
+graph TD
+    A[ユーザー] -->|入力| B(Markdown エディタ)
+    B --> C{変換処理}
+    C -->|HTML化| D[プレビュー画面]
+    C -->|解析| E[目次生成]
+</div>
+
+## 4. デザイン調整
+ヘッダーのタイトルを削除し、よりクリーンな外観にしました。
+</textarea>
+        </div>
+
+        <div id="preview-pane">
+            <div id="preview" class="markdown-body"></div>
+        </div>
+    </div>
+
+<script>
+    const input = document.getElementById('markdown-input');
+    const output = document.getElementById('preview');
+    const sidebar = document.getElementById('sidebar');
+    const editorPane = document.getElementById('editor-pane');
+    const tocContent = document.getElementById('toc-content');
+    const previewPane = document.getElementById('preview-pane');
+
+    const turndownService = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
+    
+    // === エスケープ処理の無効化 ===
+    // "1. 概要" が "1\. 概要" に変換されるのを防ぐため、Turndownのエスケープ機能をバイパスします。
+    turndownService.escape = function (string) {
+        return string;
+    };
+
+    // === Mermaid保護用 Turndownルール ===
+    turndownService.addRule('mermaid', {
+        filter: function (node) {
+            return node.nodeName === 'DIV' && node.classList.contains('mermaid');
+        },
+        replacement: function (content, node) {
+            const original = node.getAttribute('data-original') || '';
+            return '\n<div class="mermaid">\n' + original.trim() + '\n</div>\n\n';
+        }
+    });
+
+    output.setAttribute('contenteditable', 'true');
+    const md = window.markdownit({ html: true, linkify: true, typographer: true });
+
+    function updatePreview() {
+        output.innerHTML = md.render(input.value);
+        generateTOC();
+        
+        const firstH1 = output.querySelector('h1');
+        if (firstH1 && firstH1.textContent.trim() !== '') {
+            document.title = firstH1.textContent;
+        } else {
+            document.title = '無題のドキュメント';
+        }
+
+        if (typeof mermaid !== 'undefined') {
+            const isDark = document.body.classList.contains('dark-mode') || 
+                           (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches && !document.body.classList.contains('light-mode'));
+            
+            mermaid.initialize({
+                theme: isDark ? 'dark' : 'default',
+                startOnLoad: false
+            });
+            
+            const mermaidDivs = output.querySelectorAll('.mermaid');
+            mermaidDivs.forEach(div => {
+                div.setAttribute('contenteditable', 'false');
+                div.setAttribute('data-original', div.textContent);
+            });
+
+            try { 
+                mermaid.init(undefined, mermaidDivs); 
+            } catch(e) {
+                console.error("Mermaid rendering error:", e);
+            }
+        }
+    }
+
+    function generateTOC() {
+        const headings = output.querySelectorAll('h2, h3');
+        let tocHTML = '<ul>';
+        headings.forEach((h, index) => {
+            const id = 'heading-' + index;
+            h.id = id;
+            const level = h.tagName.toLowerCase() === 'h2' ? 'toc-h2' : 'toc-h3';
+            tocHTML += `<li class="${level}"><a href="#${id}" onclick="jumpAndHighlight(event, '${id}')">${h.textContent}</a></li>`;
+        });
+        tocHTML += '</ul>';
+        tocContent.innerHTML = tocHTML;
+    }
+
+    function jumpAndHighlight(event, id) {
+        event.preventDefault();
+        const target = document.getElementById(id);
+        if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            target.classList.remove('section-highlight');
+            void target.offsetWidth; 
+            target.classList.add('section-highlight');
+        }
+    }
+
+    output.addEventListener('input', () => {
+        const markdown = turndownService.turndown(output.innerHTML);
+        input.value = markdown;
+        generateTOC();
+        
+        const firstH1 = output.querySelector('h1');
+        if (firstH1 && firstH1.textContent.trim() !== '') {
+            document.title = firstH1.textContent;
+        } else {
+            document.title = '無題のドキュメント';
+        }
+    });
+
+    function toggleSidebar() { sidebar.classList.toggle('collapsed'); }
+
+    function toggleDarkMode() {
+        const isOsDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (isOsDark) { document.body.classList.toggle('light-mode'); } 
+        else { document.body.classList.toggle('dark-mode'); }
+        updatePreview();
+    }
+
+    function toggleEditor() {
+        const isHidden = (editorPane.style.display === 'none' || editorPane.style.display === '');
+        if (isHidden) {
+            editorPane.style.display = 'flex';
+            sidebar.classList.add('collapsed');
+            input.focus();
+        } else {
+            editorPane.style.display = 'none';
+            sidebar.classList.remove('collapsed');
+        }
+    }
+
+    function insertTpl(type) {
+        let tpl = '';
+        switch(type) {
+            case 'h2': tpl = '\n## 新しい見出し\n'; break;
+            case 'table': tpl = '\n| 見出し1 | 見出し2 |\n| :--- | :--- |\n| データ1 | データ2 |\n'; break;
+            case 'code': tpl = '\n```python\n# コードをここに入力\n```\n'; break;
+            case 'quote': tpl = '\n> 引用テキスト\n'; break;
+        }
+        const startPos = input.selectionStart;
+        const endPos = input.selectionEnd;
+        input.value = input.value.substring(0, startPos) + tpl + input.value.substring(endPos);
+        updatePreview();
+        input.focus();
+    }
+
+    function saveAsHtml() {
+        const currentContent = input.value;
+        let fullHtml = document.documentElement.outerHTML;
+        
+        const currentTitle = document.title;
+        fullHtml = fullHtml.replace(/<title>.*?<\/title>/, `<title>${currentTitle}</title>`);
+        
+        const escapedContent = currentContent.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        fullHtml = fullHtml.replace(/<textarea id="markdown-input">([\s\S]*?)<\/textarea>/, `<textarea id="markdown-input">${escapedContent}<\/textarea>`);
+        
+        fullHtml = fullHtml.replace(/id="editor-pane" style="display: flex;"/, 'id="editor-pane" style="display: none;"');
+        if (!fullHtml.includes('id="editor-pane" style="display: none;"')) {
+            fullHtml = fullHtml.replace(/id="editor-pane"/, 'id="editor-pane" style="display: none;"');
+        }
+        
+        const blob = new Blob(['<!DOCTYPE html>\n' + fullHtml], { type: 'text/html;charset=utf-8' });
+        const a = document.createElement('a');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.href = URL.createObjectURL(blob);
+        a.download = `${currentTitle}_${timestamp}.html`; 
+        a.click();
+    }
+
+    window.onload = function() {
+        input.addEventListener('input', updatePreview);
+        window.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleEditor(); });
+        updatePreview();
+    };
+</script>
+</body>
+</html>
