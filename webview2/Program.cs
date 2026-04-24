@@ -13,15 +13,22 @@ namespace WebView2App
         [STAThread]
         static void Main()
         {
-            // 環境変数
             Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", 
-                "--disable-features=InsecureFormWarnings,MixedFormsInterstitial,SafeBrowsing --allow-running-insecure-content");
+                "--disable-features=InsecureFormWarnings,MixedFormsInterstitial,SafeBrowsing " +
+                "--allow-running-insecure-content " +
+                "--ssl-version-min=tls1 " + 
+                "--cipher-suite-blacklist=0x0000");
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             
             string initialUrl = IniFileHandler.GetUrlFromIni();
-            Application.Run(new MainForm(initialUrl));
+            string appendUserAgent = IniFileHandler.GetUserAgentFromIni();
+            // INIからサイズを取得
+            int width = IniFileHandler.GetIntValue("Settings", "Width", 1024);
+            int height = IniFileHandler.GetIntValue("Settings", "Height", 768);
+
+            Application.Run(new MainForm(initialUrl, appendUserAgent, width, height));
         }
     }
 
@@ -29,14 +36,18 @@ namespace WebView2App
     {
         private WebView2 webView;
         private string currentUrl;
+        private string appendUserAgent;
         private FileSystemWatcher exitWatcher;
 
-        public MainForm(string url)
+        public MainForm(string url, string appendUserAgent, int width, int height)
         {
             this.currentUrl = url;
-            this.Text = "読み込み中..."; // 初期表示
-            this.Width = 1024;
-            this.Height = 768;
+            this.appendUserAgent = appendUserAgent;
+            this.Text = "読み込み中...";
+            
+            // 引数で渡されたサイズを設定
+            this.Width = width;
+            this.Height = height;
 
             webView = new WebView2();
             webView.Dock = DockStyle.Fill;
@@ -62,16 +73,19 @@ namespace WebView2App
         {
             await webView.EnsureCoreWebView2Async(null);
 
+            if (!string.IsNullOrEmpty(this.appendUserAgent))
+            {
+                string defaultUA = webView.CoreWebView2.Settings.UserAgent;
+                webView.CoreWebView2.Settings.UserAgent = string.Format("{0} {1}", defaultUA, this.appendUserAgent);
+            }
+
             webView.CoreWebView2.ServerCertificateErrorDetected += CoreWebView2_ServerCertificateErrorDetected;
             webView.CoreWebView2.NewWindowRequested += CoreWebView2_NewWindowRequested;
-
-            // HTMLのタイトルが変更された時に実行されるイベント
             webView.CoreWebView2.DocumentTitleChanged += CoreWebView2_DocumentTitleChanged;
             
             webView.CoreWebView2.Navigate(this.currentUrl);
         }
 
-        // ページのタイトルをウィンドウのタイトルバーに反映する
         private void CoreWebView2_DocumentTitleChanged(object sender, object e)
         {
             this.Text = webView.CoreWebView2.DocumentTitle;
@@ -85,7 +99,8 @@ namespace WebView2App
         private void CoreWebView2_NewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
         {
             e.Handled = true;
-            MainForm newWindow = new MainForm(e.Uri);
+            // 子ウィンドウにも設定を引き継ぐ（サイズは親と同じに設定）
+            MainForm newWindow = new MainForm(e.Uri, this.appendUserAgent, this.Width, this.Height);
             newWindow.Show();
         }
 
@@ -106,16 +121,42 @@ namespace WebView2App
             string lpAppName, string lpKeyName, string lpDefault,
             StringBuilder lpReturnedString, uint nSize, string lpFileName);
 
+        private static string GetIniPath()
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Program.ini");
+        }
+
         public static string GetUrlFromIni()
         {
-            string defaultUrl = "https://www.google.com/";
-            string iniPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Program.ini");
+            return GetValue("Settings", "Url", "https://www.google.com/");
+        }
 
-            if (!File.Exists(iniPath)) return defaultUrl;
+        public static string GetUserAgentFromIni()
+        {
+            // 元のiniのキー名「UserAgent」に合わせています
+            return GetValue("Settings", "UserAgent", "");
+        }
+
+        // 数値を取得するためのヘルパー
+        public static int GetIntValue(string section, string key, int defaultValue)
+        {
+            string val = GetValue(section, key, "");
+            int result;
+            if (int.TryParse(val, out result))
+            {
+                return result;
+            }
+            return defaultValue;
+        }
+
+        private static string GetValue(string section, string key, string defaultValue)
+        {
+            string iniPath = GetIniPath();
+            if (!File.Exists(iniPath)) return defaultValue;
 
             StringBuilder sb = new StringBuilder(1024);
-            uint result = GetPrivateProfileString("Settings", "Url", defaultUrl, sb, (uint)sb.Capacity, iniPath);
-            return result > 0 ? sb.ToString() : defaultUrl;
+            uint result = GetPrivateProfileString(section, key, defaultValue, sb, (uint)sb.Capacity, iniPath);
+            return result > 0 ? sb.ToString().Trim() : defaultValue;
         }
     }
 }
